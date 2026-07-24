@@ -248,16 +248,22 @@
     </div>
 
     <script>
+       // ============================================
+        // إعدادات - عدّل المسار حسب مشروعك
         // ============================================
-        // إعدادات
-        // ============================================
-        const MODEL_PATH = 'models/AMK.glb';
+        const MODEL_PATH = 'models/heli2.glb';
         
-        // أسماء الأجزاء المتوقعة (من الصورة)
+        // أسماء الأجزاء من الصورة
         const EXPECTED_PARTS = [
-            'amkanill', 'amkarco', 'amkbase', 'amkbloc', 'amkcao',
-            'amkeje', 'amkesta', 'amkgua1', 'amkgua2', 'amklla1',
-            'amklla2', 'amknem1', 'amknem2', 'amkppla', 'amkpro', 'amkprod'
+            '500_D_cristal_1_VL',
+            '500_D_cristal_2_VL',
+            '500_D_cristal_3_VL',
+            '500_D_cristal_4_VL',
+            '500_D_cristales_front',
+            '500_D_cristales_supe',
+            '500_D_fuselaje__VL',
+            '500_D_PALAS_VL',
+            '500_D_ROTOR_DE_C'
         ];
         
         let scene, camera, renderer, controls;
