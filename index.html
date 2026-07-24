@@ -237,22 +237,21 @@
         // ============================================
         const MODEL_PATH = 'models/heli3.glb';
         
-        // أسماء الأجزاء المتوقعة
+        // ✅ الأسماء الصحيحة من الصورة
         const EXPECTED_PARTS = [
             '500_D_cristal_1_VL',
             '500_D_cristal_2_VL',
             '500_D_cristal_3_VL',
             '500_D_cristal_4_VL',
-            '500_D_cristales_front',
-            '500_D_cristales_supe',
+            '500_D_cristales_frontales__VL',
+            '500_D_cristales_superiores__VL',
             '500_D_fuselaje__VL',
-            '500_D_PALAS_VL',
+            '500_D_PALAS__VL',
             '500_D_ROTOR_DE_COLA_VL'
         ];
         
         let scene, camera, renderer, controls;
-        let parts = {};           // key = safeId, value = THREE.Object3D
-        let partNames = {};       // key = safeId, value = original name
+        let parts = {};
         let originalPositions = {};
         let isExploded = false;
         
@@ -263,7 +262,6 @@
             debug.scrollTop = debug.scrollHeight;
         }
         
-        // تحويل الاسم إلى ID آمن
         function toSafeId(name) {
             return name.replace(/[^a-zA-Z0-9]/g, '_');
         }
@@ -294,7 +292,6 @@
             controls.enableDamping = true;
             controls.target.set(0, 2, 0);
             
-            // إضاءة
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
             scene.add(ambientLight);
             
@@ -349,54 +346,42 @@
         }
         
         // ============================================
-        // استخراج الأجزاء
+        // استخراج الأجزاء - مطابقة دقيقة
         // ============================================
         function extractParts(model) {
             let foundCount = 0;
             const allNames = [];
             
-            // المرور الأول: جمع كل الأسماء
+            // جمع كل الأسماء
             model.traverse(function(child) {
                 if (child.name && child.name.trim() !== '') {
-                    allNames.push(child.name);
+                    allNames.push(child.name.trim());
                 }
             });
             
-            log('إجمالي العناصر في الملف: ' + allNames.length);
+            log('إجمالي العناصر: ' + allNames.length);
             log('الأسماء الموجودة:');
             allNames.forEach(n => log('  • ' + n));
             log('---');
             
-            // المرور الثاني: البحث عن الأجزاء
-            model.traverse(function(child) {
-                if (!child.name || child.name.trim() === '') return;
+            // البحث عن كل جزء متوقع
+            for (const expectedName of EXPECTED_PARTS) {
+                const safeId = toSafeId(expectedName);
+                let found = false;
                 
-                const childName = child.name.trim();
-                const childNameLower = childName.toLowerCase();
-                
-                for (const expectedName of EXPECTED_PARTS) {
-                    const expectedLower = expectedName.toLowerCase();
-                    const safeId = toSafeId(expectedName);
+                model.traverse(function(child) {
+                    if (found) return; // إذا وجدنا، لا داعي للاستمرار
+                    if (!child.name || child.name.trim() === '') return;
                     
-                    // إذا وجدنا بالفعل هذا الجزء، تخطى
-                    if (parts[safeId]) continue;
+                    const childName = child.name.trim();
                     
-                    // محاولة 1: مطابقة دقيقة
-                    // محاولة 2: مطابقة بدون حساسية الحروف
-                    // محاولة 3: child يحتوي على expected
-                    // محاولة 4: expected يحتوي على child
-                    const isMatch = 
-                        childName === expectedName ||
-                        childNameLower === expectedLower ||
-                        childNameLower.includes(expectedLower) ||
-                        expectedLower.includes(childNameLower);
-                    
-                    if (isMatch) {
+                    // مطابقة دقيقة
+                    if (childName === expectedName) {
                         parts[safeId] = child;
-                        partNames[safeId] = expectedName;
                         foundCount++;
+                        found = true;
                         
-                        log('✓ وجدت: [' + expectedName + '] ← [' + childName + ']');
+                        log('✓ وجدت: ' + expectedName);
                         
                         originalPositions[safeId] = {
                             x: child.position.x,
@@ -411,25 +396,16 @@
                         };
                         
                         createPartControl(safeId, expectedName);
-                        break;
-                    }
-                }
-            });
-            
-            log('---');
-            log('الأجزاء المتوقعة: ' + EXPECTED_PARTS.length);
-            log('الأجزاء التي وجدت: ' + foundCount);
-            
-            // إذا لم نجد كل الأجزاء
-            if (foundCount < EXPECTED_PARTS.length) {
-                log('⚠️ أجزاء لم توجد:');
-                EXPECTED_PARTS.forEach(name => {
-                    const safeId = toSafeId(name);
-                    if (!parts[safeId]) {
-                        log('  ✗ ' + name);
                     }
                 });
+                
+                if (!found) {
+                    log('✗ لم أجد: ' + expectedName);
+                }
             }
+            
+            log('---');
+            log('الأجزاء التي وجدت: ' + foundCount + ' / ' + EXPECTED_PARTS.length);
             
             // توسيط الكاميرا
             if (foundCount > 0) {
