@@ -29,7 +29,6 @@
             height: 100vh;
         }
         
-        /* لوحة التحكم */
         #control-panel {
             width: 320px;
             background: #16213e;
@@ -161,7 +160,6 @@
             color: #fff;
         }
         
-        /* منطقة العرض */
         #canvas-container {
             flex: 1;
             position: relative;
@@ -208,11 +206,25 @@
         .global-controls button:hover {
             background: #e94560;
         }
+        
+        #debug-info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            color: #0f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-line;
+        }
     </style>
 </head>
 <body>
     <div id="main-container">
-        <!-- لوحة التحكم -->
         <div id="control-panel">
             <h2>🎛️ التحكم بالأجزاء</h2>
             
@@ -223,35 +235,41 @@
                 <button onclick="explodeView()">💥 عرض منفصل (Explode)</button>
             </div>
             
-            <div id="parts-list">
-                <!-- سيتم إنشاؤها ديناميكياً -->
-            </div>
+            <div id="parts-list"></div>
         </div>
         
-        <!-- منطقة عرض المجسم -->
         <div id="canvas-container">
             <div id="loading">جاري التحميل...</div>
             <div id="info-bar">
                 <div>🖱️ يسار: تدوير | 🖱️ يمين: تحريك | 🖱️ عجلة: تكبير</div>
             </div>
+            <div id="debug-info"></div>
         </div>
     </div>
 
     <script>
         // ============================================
-        // إعدادات - عدّل المسارات حسب مشروعك
+        // إعدادات
         // ============================================
-        
-        // الخيار 1: ملف واحد يحتوي كل الأجزاء
         const MODEL_PATH = 'models/AMK.glb';
-
         
-        // ============================================
-        // متغيرات Three.js
-        // ============================================
+        // أسماء الأجزاء المتوقعة (من الصورة)
+        const EXPECTED_PARTS = [
+            'amkanill', 'amkarco', 'amkbase', 'amkbloc', 'amkcao',
+            'amkeje', 'amkesta', 'amkgua1', 'amkgua2', 'amklla1',
+            'amklla2', 'amknem1', 'amknem2', 'amkppla', 'amkpro', 'amkprod'
+        ];
+        
         let scene, camera, renderer, controls;
-        let parts = {}; // تخزين كل جزء
-        let originalPositions = {}; // المواقع الأصلية
+        let parts = {};
+        let originalPositions = {};
+        let isExploded = false;
+        
+        function log(msg) {
+            console.log(msg);
+            const debug = document.getElementById('debug-info');
+            debug.textContent += msg + '\n';
+        }
         
         // ============================================
         // التهيئة
@@ -259,173 +277,253 @@
         function init() {
             const container = document.getElementById('canvas-container');
             
-            // المشهد
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x1a1a2e);
-            scene.fog = new THREE.Fog(0x1a1a2e, 10, 50);
             
-            // الكاميرا
             camera = new THREE.PerspectiveCamera(
                 45, 
                 container.clientWidth / container.clientHeight, 
                 0.1, 
                 1000
             );
-            camera.position.set(8, 6, 8);
+            camera.position.set(10, 10, 10);
             
-            // الرندر
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
             renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             container.appendChild(renderer.domElement);
             
-            // التحكم
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
-            controls.target.set(0, 1, 0);
+            controls.target.set(0, 2, 0);
             
-            // الإضاءة
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            // إضاءة
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
             scene.add(ambientLight);
             
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(5, 10, 5);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(10, 20, 10);
             dirLight.castShadow = true;
-            dirLight.shadow.mapSize.width = 2048;
-            dirLight.shadow.mapSize.height = 2048;
             scene.add(dirLight);
             
-            const fillLight = new THREE.DirectionalLight(0x4444ff, 0.3);
-            fillLight.position.set(-5, 2, -5);
-            scene.add(fillLight);
+            const backLight = new THREE.DirectionalLight(0x4444ff, 0.3);
+            backLight.position.set(-10, 5, -10);
+            scene.add(backLight);
             
             // شبكة أرضية
-            const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+            const gridHelper = new THREE.GridHelper(30, 30, 0x444444, 0x222222);
             scene.add(gridHelper);
             
-            // تحميل الأجزاء
-            loadAllParts();
+            // محاور
+            const axesHelper = new THREE.AxesHelper(5);
+            scene.add(axesHelper);
             
-            // التكيف مع تغيير الحجم
+            // تحميل المجسم
+            loadModel();
+            
             window.addEventListener('resize', onWindowResize);
-            
-            // حلقة الرسم
             animate();
         }
         
         // ============================================
-        // تحميل الأجزاء
+        // تحميل الملف الواحد
         // ============================================
-        function loadAllParts() {
+        function loadModel() {
             const loader = new THREE.GLTFLoader();
-            let loadedCount = 0;
-            const totalParts = PARTS_CONFIG.length;
             
-            PARTS_CONFIG.forEach((partConfig, index) => {
-                loader.load(partConfig.path, function(gltf) {
-                    const model = gltf.scene;
-                    
-                    // تسمية الجزء
-                    model.name = partConfig.name;
-                    
-                    // تفعيل الظلال
-                    model.traverse(function(child) {
-                        if (child.isMesh) {
-                            child.castShadow = true;
-                            child.receiveShadow = true;
-                        }
-                    });
-                    
-                    // حفظ الموقع الأصلي
-                    originalPositions[partConfig.name] = {
-                        x: model.position.x,
-                        y: model.position.y,
-                        z: model.position.z,
-                        rx: model.rotation.x,
-                        ry: model.rotation.y,
-                        rz: model.rotation.z
-                    };
-                    
-                    // إضافة للمشهد
-                    scene.add(model);
-                    parts[partConfig.name] = model;
-                    
-                    // إنشاء عنصر تحكم
-                    createPartControl(partConfig);
-                    
-                    loadedCount++;
-                    if (loadedCount === totalParts) {
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                }, undefined, function(error) {
-                    console.error('خطأ في تحميل ' + partConfig.name + ':', error);
-                    loadedCount++;
-                });
+            log('جاري تحميل: ' + MODEL_PATH);
+            
+            loader.load(MODEL_PATH, function(gltf) {
+                log('✅ تم تحميل الملف بنجاح!');
+                
+                const model = gltf.scene;
+                scene.add(model);
+                
+                // استخراج الأجزاء من الملف
+                extractParts(model);
+                
+                document.getElementById('loading').style.display = 'none';
+                
+            }, function(progress) {
+                const percent = Math.round((progress.loaded / progress.total) * 100);
+                document.getElementById('loading').textContent = 'جاري التحميل... ' + percent + '%';
+                
+            }, function(error) {
+                log('❌ خطأ في التحميل: ' + error.message);
+                document.getElementById('loading').textContent = 'خطأ في التحميل! تأكد من وجود الملف';
+                document.getElementById('loading').style.color = '#ff4444';
             });
         }
         
         // ============================================
-        // إنشاء عنصر تحكم لكل جزء
+        // استخراج الأجزاء من الملف الواحد
         // ============================================
-        function createPartControl(config) {
+        function extractParts(model) {
+            let foundCount = 0;
+            const allObjects = [];
+            
+            // المرور على كل العناصر في المشهد
+            model.traverse(function(child) {
+                allObjects.push({
+                    name: child.name,
+                    type: child.type,
+                    isMesh: child.isMesh,
+                    isGroup: child.isGroup || child.type === 'Group',
+                    isObject3D: child.isObject3D
+                });
+                
+                // البحث عن الأجزاء المعروفة
+                const lowerName = child.name.toLowerCase();
+                
+                for (const partName of EXPECTED_PARTS) {
+                    if (lowerName.includes(partName.toLowerCase())) {
+                        // وجدنا جزء!
+                        if (!parts[partName]) {
+                            parts[partName] = child;
+                            foundCount++;
+                            
+                            log('✓ وجدت جزء: ' + partName + ' (الاسم الكامل: ' + child.name + ')');
+                            
+                            // حفظ الموقع الأصلي
+                            originalPositions[partName] = {
+                                x: child.position.x,
+                                y: child.position.y,
+                                z: child.position.z,
+                                rx: child.rotation.x,
+                                ry: child.rotation.y,
+                                rz: child.rotation.z,
+                                sx: child.scale.x,
+                                sy: child.scale.y,
+                                sz: child.scale.z
+                            };
+                            
+                            // إنشاء عنصر تحكم
+                            createPartControl(partName, child.name);
+                        }
+                        break;
+                    }
+                }
+            });
+            
+            log('---');
+            log('الأجزاء المعروفة: ' + EXPECTED_PARTS.length);
+            log('الأجزاء التي وجدت: ' + foundCount);
+            log('إجمالي العناصر في الملف: ' + allObjects.length);
+            
+            // إذا لم نجد أي جزء معروف، نعرض كل الأسماء
+            if (foundCount === 0) {
+                log('⚠️ لم أجد أجزاء معروفة! الأسماء الموجودة:');
+                allObjects.forEach(obj => {
+                    if (obj.name && obj.name !== '') {
+                        log('  - ' + obj.name + ' (' + obj.type + ')');
+                    }
+                });
+                
+                // محاولة ثانية: نعرض كل Mesh كجزء
+                log('---');
+                log('محاولة إنشاء تحكم لكل Mesh...');
+                allObjects.forEach(obj => {
+                    if (obj.isMesh && obj.name && obj.name !== '') {
+                        const safeName = obj.name.replace(/[^a-zA-Z0-9]/g, '_');
+                        if (!parts[safeName]) {
+                            parts[safeName] = model.getObjectByName(obj.name);
+                            originalPositions[safeName] = {
+                                x: parts[safeName].position.x,
+                                y: parts[safeName].position.y,
+                                z: parts[safeName].position.z,
+                                rx: parts[safeName].rotation.x,
+                                ry: parts[safeName].rotation.y,
+                                rz: parts[safeName].rotation.z,
+                                sx: parts[safeName].scale.x,
+                                sy: parts[safeName].scale.y,
+                                sz: parts[safeName].scale.z
+                            };
+                            createPartControl(safeName, obj.name);
+                            foundCount++;
+                        }
+                    }
+                });
+            }
+            
+            // توسيط الكاميرا على المجسم
+            if (foundCount > 0) {
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                
+                controls.target.copy(center);
+                
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const fov = camera.fov * (Math.PI / 180);
+                let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                cameraZ *= 2.5;
+                
+                camera.position.set(center.x + cameraZ/2, center.y + cameraZ/2, center.z + cameraZ);
+                camera.lookAt(center);
+                
+                log('حجم المجسم: ' + size.x.toFixed(2) + ' x ' + size.y.toFixed(2) + ' x ' + size.z.toFixed(2));
+            }
+        }
+        
+        // ============================================
+        // إنشاء عنصر تحكم
+        // ============================================
+        function createPartControl(partName, fullName) {
             const container = document.getElementById('parts-list');
-            const name = config.name;
             
             const div = document.createElement('div');
             div.className = 'part-control';
-            div.id = 'control-' + name;
+            div.id = 'control-' + partName;
             
             div.innerHTML = `
                 <div class="part-header">
-                    <span class="part-name">${config.label} (${name})</span>
-                    <button class="visibility-toggle" id="btn-${name}" onclick="toggleVisibility('${name}')">
+                    <span class="part-name">${fullName}</span>
+                    <button class="visibility-toggle" id="btn-${partName}" onclick="toggleVisibility('${partName}')">
                         إخفاء
                     </button>
                 </div>
                 
                 <div class="slider-group">
                     <label>موقع X</label>
-                    <input type="range" min="-10" max="10" step="0.1" value="0" 
-                        oninput="updatePosition('${name}', 'x', this.value)">
-                    <span class="slider-value" id="val-x-${name}">0</span>
+                    <input type="range" min="-20" max="20" step="0.1" value="0" 
+                        oninput="updatePosition('${partName}', 'x', this.value)">
+                    <span class="slider-value" id="val-x-${partName}">0</span>
                 </div>
                 
                 <div class="slider-group">
                     <label>موقع Y</label>
-                    <input type="range" min="-10" max="10" step="0.1" value="0" 
-                        oninput="updatePosition('${name}', 'y', this.value)">
-                    <span class="slider-value" id="val-y-${name}">0</span>
+                    <input type="range" min="-20" max="20" step="0.1" value="0" 
+                        oninput="updatePosition('${partName}', 'y', this.value)">
+                    <span class="slider-value" id="val-y-${partName}">0</span>
                 </div>
                 
                 <div class="slider-group">
                     <label>موقع Z</label>
-                    <input type="range" min="-10" max="10" step="0.1" value="0" 
-                        oninput="updatePosition('${name}', 'z', this.value)">
-                    <span class="slider-value" id="val-z-${name}">0</span>
+                    <input type="range" min="-20" max="20" step="0.1" value="0" 
+                        oninput="updatePosition('${partName}', 'z', this.value)">
+                    <span class="slider-value" id="val-z-${partName}">0</span>
                 </div>
                 
                 <div class="slider-group">
                     <label>تدوير Y</label>
                     <input type="range" min="0" max="360" step="1" value="0" 
-                        oninput="updateRotation('${name}', 'y', this.value)">
-                    <span class="slider-value" id="val-ry-${name}">0°</span>
+                        oninput="updateRotation('${partName}', 'y', this.value)">
+                    <span class="slider-value" id="val-ry-${partName}">0°</span>
                 </div>
                 
                 <div class="slider-group">
                     <label>حجم</label>
                     <input type="range" min="0.1" max="3" step="0.1" value="1" 
-                        oninput="updateScale('${name}', this.value)">
-                    <span class="slider-value" id="val-s-${name}">1</span>
+                        oninput="updateScale('${partName}', this.value)">
+                    <span class="slider-value" id="val-s-${partName}">1</span>
                 </div>
                 
                 <div class="color-picker">
                     <label>اللون:</label>
-                    <input type="color" value="#ffffff" onchange="updateColor('${name}', this.value)">
+                    <input type="color" value="#ffffff" onchange="updateColor('${partName}', this.value)">
                 </div>
                 
-                <button class="reset-btn" onclick="resetPart('${name}')">
+                <button class="reset-btn" onclick="resetPart('${partName}')">
                     🔄 إعادة تعيين
                 </button>
             `;
@@ -436,8 +534,6 @@
         // ============================================
         // دوال التحكم
         // ============================================
-        
-        // تبديل الظهور
         function toggleVisibility(name) {
             if (parts[name]) {
                 parts[name].visible = !parts[name].visible;
@@ -452,7 +548,6 @@
             }
         }
         
-        // تحديث الموقع
         function updatePosition(name, axis, value) {
             if (parts[name]) {
                 parts[name].position[axis] = parseFloat(value);
@@ -460,7 +555,6 @@
             }
         }
         
-        // تحديث التدوير
         function updateRotation(name, axis, value) {
             if (parts[name]) {
                 parts[name].rotation[axis] = THREE.MathUtils.degToRad(parseFloat(value));
@@ -468,7 +562,6 @@
             }
         }
         
-        // تحديث الحجم
         function updateScale(name, value) {
             if (parts[name]) {
                 const s = parseFloat(value);
@@ -477,92 +570,85 @@
             }
         }
         
-        // تحديث اللون
         function updateColor(name, colorValue) {
             if (parts[name]) {
                 parts[name].traverse(function(child) {
                     if (child.isMesh && child.material) {
-                        child.material.color.set(colorValue);
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.color.set(colorValue));
+                        } else {
+                            child.material.color.set(colorValue);
+                        }
                     }
                 });
             }
         }
         
-        // إعادة تعيين جزء واحد
         function resetPart(name) {
             if (parts[name] && originalPositions[name]) {
                 const orig = originalPositions[name];
                 parts[name].position.set(orig.x, orig.y, orig.z);
                 parts[name].rotation.set(orig.rx, orig.ry, orig.rz);
-                parts[name].scale.set(1, 1, 1);
+                parts[name].scale.set(orig.sx, orig.sy, orig.sz);
                 parts[name].visible = true;
                 
-                // إعادة تعيين الـ UI
                 const control = document.getElementById('control-' + name);
                 control.querySelectorAll('input[type="range"]').forEach(input => {
-                    if (input.getAttribute('oninput').includes('Position')) {
-                        input.value = 0;
-                    } else if (input.getAttribute('oninput').includes('Rotation')) {
-                        input.value = 0;
-                    } else if (input.getAttribute('oninput').includes('Scale')) {
-                        input.value = 1;
-                    }
+                    const oninput = input.getAttribute('oninput') || '';
+                    if (oninput.includes('Position')) input.value = 0;
+                    else if (oninput.includes('Rotation')) input.value = 0;
+                    else if (oninput.includes('Scale')) input.value = 1;
                 });
-            }
-        }
-        
-        // إظهار الكل
-        function showAllParts() {
-            Object.keys(parts).forEach(name => {
-                parts[name].visible = true;
+                
                 const btn = document.getElementById('btn-' + name);
                 btn.textContent = 'إخفاء';
                 btn.classList.remove('hidden');
-            });
-        }
-        
-        // إخفاء الكل
-        function hideAllParts() {
-            Object.keys(parts).forEach(name => {
-                parts[name].visible = false;
-                const btn = document.getElementById('btn-' + name);
-                btn.textContent = 'إظهار';
-                btn.classList.add('hidden');
-            });
-        }
-        
-        // إعادة تعيين الكل
-        function resetAllPositions() {
-            Object.keys(parts).forEach(name => resetPart(name));
-        }
-        
-        // عرض منفصل (Explode)
-        let isExploded = false;
-        function explodeView() {
-            if (!isExploded) {
-                // تفريق الأجزاء
-                Object.keys(parts).forEach((name, index) => {
-                    const angle = (index / Object.keys(parts).length) * Math.PI * 2;
-                    const radius = 3;
-                    parts[name].position.x = Math.cos(angle) * radius;
-                    parts[name].position.z = Math.sin(angle) * radius;
-                    parts[name].position.y = index * 0.5;
-                });
-                isExploded = true;
-            } else {
-                // إرجاع للوضع الطبيعي
-                resetAllPositions();
-                isExploded = false;
             }
         }
         
-        // ============================================
-        // حلقة الرسم
-        // ============================================
-        function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
-            renderer.render(scene, camera);
+        function showAllParts() {
+            Object.keys(parts).forEach(name => {
+                if (parts[name]) parts[name].visible = true;
+                const btn = document.getElementById('btn-' + name);
+                if (btn) {
+                    btn.textContent = 'إخفاء';
+                    btn.classList.remove('hidden');
+                }
+            });
+        }
+        
+        function hideAllParts() {
+            Object.keys(parts).forEach(name => {
+                if (parts[name]) parts[name].visible = false;
+                const btn = document.getElementById('btn-' + name);
+                if (btn) {
+                    btn.textContent = 'إظهار';
+                    btn.classList.add('hidden');
+                }
+            });
+        }
+        
+        function resetAllPositions() {
+            Object.keys(parts).forEach(name => resetPart(name));
+            isExploded = false;
+        }
+        
+        function explodeView() {
+            if (!isExploded) {
+                const keys = Object.keys(parts);
+                keys.forEach((name, index) => {
+                    if (parts[name]) {
+                        const angle = (index / keys.length) * Math.PI * 2;
+                        const radius = 5;
+                        parts[name].position.x += Math.cos(angle) * radius;
+                        parts[name].position.z += Math.sin(angle) * radius;
+                        parts[name].position.y += index * 0.3;
+                    }
+                });
+                isExploded = true;
+            } else {
+                resetAllPositions();
+            }
         }
         
         function onWindowResize() {
@@ -572,7 +658,12 @@
             renderer.setSize(container.clientWidth, container.clientHeight);
         }
         
-        // بدء التشغيل
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
         init();
     </script>
 </body>
